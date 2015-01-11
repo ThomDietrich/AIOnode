@@ -10,7 +10,9 @@
 
 // operate remote radio controlled devices with 433MHz AM transmitter
 // http://code.google.com/p/rc-switch
-#include <RCSwitch.h>
+//#include <RCSwitch.h>
+
+#define ERRORLED 2
 
 /***************************************************************************************************
  *  Ethernet Server Settings: MAXC, static fallback IP
@@ -23,6 +25,9 @@ int webserverPort = 80;
 
 #define BUFFERSIZE 128
 EthernetServer server(webserverPort);
+char buffer[BUFFERSIZE];
+int bufindex;  
+String requestString;
 
 /***************************************************************************************************
  *  Ethernet Client
@@ -31,8 +36,7 @@ byte loggingServer[] = {10, 21, 7, 109};
 int logPort = 3333;
 EthernetClient ethClient;
 unsigned long lastClientExec = 0;
-unsigned long interval = 300 * 1000;
-
+unsigned long interval = 120000;
 
 /***************************************************************************************************
  *  OneWire
@@ -44,40 +48,48 @@ OneWire oneWireBus3(7);
 DallasTemperature sensor1(&oneWireBus1);
 DallasTemperature sensor2(&oneWireBus2);
 DallasTemperature sensor3(&oneWireBus3);
-float temp1;
-float temp2;
-float temp3;
+float temp1 = 0.00;
+float temp2 = 0.00;
+float temp3 = 0.00;
 
 /***************************************************************************************************
  *  HX2262
  **************************************************************************************************/
-RCSwitch hx2262Switch = RCSwitch();
-#define HX2262_PIN 4
+//RCSwitch hx2262Switch = RCSwitch();
+//#define HX2262_PIN 4
 
 /***************************************************************************************************
  *  SETUP
  **************************************************************************************************/
 void setup() {
+  pinMode(ERRORLED, OUTPUT);
+  digitalWrite(ERRORLED, HIGH);
+  
   Serial.begin(9600);
-  //while (!Serial) {
-  //  ; // wait for serial port to connect. Needed for Leonardo only
-  //}
-  Serial.println("GoGoGo!");
-
+  while (!Serial) {
+    ; // wait for serial port to connect. Needed for Leonardo only
+  }
   Serial.println("Trying to get an IP address using DHCP");
+  
   if (Ethernet.begin(mac) == 0) {
     Ethernet.begin(mac, ip, gateway, subnet);
+    digitalWrite(ERRORLED, HIGH);
+  }
+  else {
+    digitalWrite(ERRORLED, LOW);
   }
   server.begin();
   Serial.print("server is at ");
   Serial.println(Ethernet.localIP());
+  
+  requestString.reserve(BUFFERSIZE);
 
   // Start up the Dallas Temperature Control Library
   sensor1.begin();
   sensor2.begin();
   sensor3.begin();
 
-  hx2262Switch.enableTransmit(HX2262_PIN);
+//  hx2262Switch.enableTransmit(HX2262_PIN);
 }
 
 /***************************************************************************************************
@@ -89,18 +101,17 @@ void loop() {
    *  HTTP Server
    **************************************************************************************************/
 
-  char buffer[BUFFERSIZE];
-  int bufindex = 0;  
-
   EthernetClient client = server.available();
   if (client) {
     Serial.println("(new client)");
 
     memset(buffer, 0, sizeof(buffer));
-
+    bufindex = 0;
+    char c;
+    
     while (client.connected()) {
       if (client.available()) {
-        char c = client.read();
+        c = client.read();
         //Serial.write(c);
 
         if (c != '\r' && c != '\n' && bufindex < BUFFERSIZE){
@@ -117,38 +128,41 @@ void loop() {
         Serial.println(client.available());
 
         Serial.println(buffer);
-        String requestString = String(buffer);
+        requestString = String(buffer);
 
         /***************************************************************************************************
          * parse request
          **************************************************************************************************/
         // HTTP-Methode (GET, POST, PUT, ...)
-        String operation = requestString.substring(0, requestString.indexOf(' '));
-        Serial.print("operation: "); Serial.println(operation);
+        //nicht benoetigt
+        //String operation = requestString.substring(0, requestString.indexOf(' '));
+        //Serial.print("operation: "); Serial.println(operation);
         // url
         requestString = requestString.substring(requestString.indexOf('/'), requestString.indexOf(' ', requestString.indexOf('/')));
         requestString.toLowerCase();
         // back to chararray
         requestString.toCharArray(buffer, BUFFERSIZE);
-        char *command = strtok(buffer,"/");
-        char *parameter = strtok(NULL,"/");
+        char *command = strtok(buffer,"/"); //TODO reserve
+        char *parameter = strtok(NULL,"/"); //TODO reserve
 
+        /*
         if(command != NULL){
-         if(parameter != NULL){
-         Serial.print("command: "); Serial.println(command);
-         Serial.print("parameter: "); Serial.println(parameter);
-         }
-         else {
-         Serial.print("command: "); Serial.println(command);
-         Serial.println("no parameters");
-         }
-         }
+          if(parameter != NULL){
+            Serial.print("command: "); Serial.println(command);
+            Serial.print("parameter: "); Serial.println(parameter);
+          }
+          else {
+            Serial.print("command: "); Serial.println(command);
+            Serial.println("no parameters");
+          }
+        }*/
 
         /***************************************************************************************************
          * DS18B20 Temperature Command
          **************************************************************************************************/
         if (strcmp(command, "temperature") == 0) {
           Serial.println("Temperatur Dallas");
+          digitalWrite(ERRORLED, LOW);
           temp1 = readTemperatureCelsius(sensor1);
           temp2 = readTemperatureCelsius(sensor2);
           temp3 = readTemperatureCelsius(sensor3);
@@ -171,7 +185,7 @@ void loop() {
         /***************************************************************************************************
          * HX2262 SwitchOn/SwitchOff
          **************************************************************************************************/
-        else if ((strcmp(command, "switchon") == 0) || (strcmp(command, "switchoff") == 0)) {
+/*        else if ((strcmp(command, "switchon") == 0) || (strcmp(command, "switchoff") == 0)) {
           Serial.println("HX2262 SwitchOn-SwitchOff");
           // send a standard http response header
           client.println("HTTP/1.1 200 OK");
@@ -205,7 +219,7 @@ void loop() {
           client.println();
           break;
         }
-
+*/
         /***************************************************************************************************
          * Template
          **************************************************************************************************/
@@ -230,6 +244,7 @@ void loop() {
          **************************************************************************************************/
         else {
           Serial.println("Error, no or unknown command");
+          digitalWrite(ERRORLED, HIGH);
           //client.println("HTTP/1.1 404 Not Found");
           //client.println("Content-Type: text/html");
           //client.println();
@@ -263,6 +278,7 @@ void loop() {
     Serial.println("Send");
     if (ethClient.connect(loggingServer, logPort)) {
       Serial.println("connected");
+      digitalWrite(ERRORLED, LOW);
       temp1 = readTemperatureCelsius(sensor1);
       temp2 = readTemperatureCelsius(sensor2);
       temp3 = readTemperatureCelsius(sensor3);
@@ -280,9 +296,10 @@ void loop() {
       ethClient.stop();
     } else {
       Serial.println("connection failed");
+      digitalWrite(ERRORLED, HIGH);
     }
   }
-  //Behandelt Überlauf
+  //Behandelt Ueberlauf
   if (millis() < lastClientExec) lastClientExec = 0;
   
 } //LOOP
@@ -298,6 +315,7 @@ float readTemperatureCelsius(DallasTemperature oneWireSensor) {
   Serial.println(temperature,3);  //zero is first sensor if we had multiple on bus
   return temperature;
 }
+
 
 
 
